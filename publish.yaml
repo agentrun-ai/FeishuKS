@@ -1,0 +1,185 @@
+# ------------------------------------
+#   应用发布配置文件
+#   用于将应用发布到 Serverless 应用中心
+# ------------------------------------
+
+Type: Application
+Name: feishu-knowledge-sync
+Provider:
+  - 阿里云
+Version: 1.0.0
+Description: 
+  zh: 飞书知识库自动同步到AnalyticDB知识库的完整解决方案，支持定时同步和实时响应文件变更
+  en: Complete solution for automatically syncing Feishu knowledge base to AnalyticDB knowledge base with scheduled sync and real-time file change response
+HomePage: https://github.com/devsapp/FeishuKS
+Tags:
+  - 飞书
+  - 知识库
+  - AnalyticDB
+  - RAG
+  - 向量数据库
+  - 文档同步
+  - AI
+Category: AI&ML
+Service:
+  函数计算:
+    - 函数计算
+  其它:
+    - 对象存储OSS
+    - AnalyticDB PostgreSQL版
+    - 飞书开放平台
+
+Parameters:
+  type: object
+  additionalProperties: false
+  required:
+    - region
+    - serviceName
+    - roleArn
+    - feishuAppId
+    - feishuAppSecret
+    - wikiSpaceName
+    - gpdbInstanceId
+    - gpdbNamespacePassword
+    - ossBucketName
+  properties:
+    region:
+      title: 地域
+      type: string
+      default: cn-hangzhou
+      description: 创建应用所在的地区
+      enum:
+        - cn-beijing
+        - cn-hangzhou
+        - cn-shanghai
+        - cn-qingdao
+        - cn-zhangjiakou
+        - cn-huhehaote
+        - cn-shenzhen
+        - cn-chengdu
+        - cn-hongkong
+        - ap-southeast-1
+        - ap-southeast-2
+        - ap-southeast-3
+        - ap-southeast-5
+        - ap-northeast-1
+        - eu-central-1
+        - eu-west-1
+        - us-west-1
+        - us-east-1
+        - ap-south-1
+    serviceName:
+      title: 服务名
+      type: string
+      default: feishu-sync-service
+      description: 服务名称，只能包含字母、数字、下划线和中划线。不能以数字、中划线开头。长度在 1-128 之间
+      pattern: '^[a-zA-Z_][a-zA-Z0-9_-]{0,127}$'
+    roleArn:
+      title: RAM角色ARN
+      type: string
+      default: ''
+      pattern: '^acs:ram::[0-9]*:role/.*$'
+      description: 应用所属的函数计算服务配置的 role, 请提前创建好对应的 role, 授信函数计算服务, 并配置好相关权限策略
+      required: true
+      x-role:
+        name: fcknowledgesyncRole
+        service: fc
+        authorities:
+          - AliyunOSSFullAccess
+          - AliyunAnalyticDBforPostgreSQLFullAccess
+          - AliyunLogFullAccess
+
+    # 飞书应用配置
+    feishuAppId:
+      title: 飞书应用ID
+      type: string
+      description: 飞书企业自建应用的App ID，格式如：cli_xxxxxxxxxxxxxxxxx。请先在飞书开发者后台创建企业自建应用
+      pattern: '^cli_[a-zA-Z0-9]{17}$'
+      required: true
+      x-hints:
+        - 登录飞书开发者后台 https://open.feishu.cn/app
+        - 创建企业自建应用
+        - 在应用详情页面获取App ID
+    feishuAppSecret:
+      title: 飞书应用密钥
+      type: string
+      description: 飞书企业自建应用的App Secret，与App ID配对使用
+      required: true
+      x-props: password
+      x-hints:
+        - 在飞书开发者后台应用详情页面获取App Secret
+        - 请确保应用已开通必要的API权限
+    wikiSpaceName:
+      title: 知识库名称
+      type: string
+      description: 要同步的飞书知识库名称，例如：规章制度、技术文档等
+      required: true
+      x-hints:
+        - 请确保应用已被添加为该知识库的管理员或协作者
+        - 知识库名称区分大小写，请准确填写
+
+    # AnalyticDB配置
+    gpdbInstanceId:
+      title: AnalyticDB实例ID
+      type: string
+      description: AnalyticDB PostgreSQL版实例ID，格式如：gp-xxxxxxxxx。实例需开启向量引擎
+      pattern: '^gp-[a-zA-Z0-9]{9,}$'
+      required: true
+      x-hints:
+        - 登录AnalyticDB控制台查看实例ID
+        - 实例版本需支持向量引擎和RAG Service
+        - 实例状态需为运行中
+    gpdbCollection:
+      title: 文档集合名称
+      type: string
+      default: document
+      description: AnalyticDB中用于存储文档的集合名称
+      x-hints:
+        - 如果集合不存在，需要先通过API创建
+        - 建议使用有意义的集合名称
+    gpdbNamespace:
+      title: 命名空间
+      type: string
+      default: public
+      description: AnalyticDB中的命名空间，用于隔离不同的数据
+    gpdbNamespacePassword:
+      title: 命名空间密码
+      type: string
+      description: AnalyticDB命名空间对应的密码，用于访问认证
+      required: true
+      x-props: password
+      x-hints:
+        - 如果使用默认命名空间public，请设置对应密码
+        - 如果使用自定义命名空间，请先通过API创建
+    gpdbEndpoint:
+      title: AnalyticDB端点
+      type: string
+      default: ''
+      description: AnalyticDB服务端点，留空则自动根据region生成，格式如：https://gpdb.cn-hangzhou.aliyuncs.com
+      pattern: '^(https?://.*)?$'
+
+    # OSS配置
+    ossBucketName:
+      title: OSS存储桶名称
+      type: string
+      description: 用于存储知识库文档的OSS存储桶名称，作为文件中转存储
+      required: true
+      pattern: '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'
+      x-hints:
+        - 存储桶名称全局唯一
+        - 建议创建专用存储桶用于知识库同步
+        - 存储桶需要与函数在同一地域
+    ossPrefix:
+      title: OSS路径前缀
+      type: string
+      default: wiki/
+      description: OSS中存储文档的路径前缀，用于组织文件结构
+      x-hints:
+        - 建议以/结尾，如：wiki/、docs/
+        - 用于区分不同类型的文档
+    ossEndpoint:
+      title: OSS端点
+      type: string
+      default: ''
+      description: OSS服务端点，留空则自动根据region生成，格式如：https://oss-cn-hangzhou.aliyuncs.com
+      pattern: '^(https?://.*)?$'

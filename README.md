@@ -231,17 +231,6 @@ wiki/
 | `获取文档内容失败` | 文档权限不足 | 将应用添加为知识库管理员或文档协作者 |
 | `限流错误` | API调用过于频繁 | 程序会自动重试，无需手动处理 |
 
-## TODO
-
-- [ ] 集成 Serverless Devs 工具支持
-- [ ] 添加 OSS 触发器函数，处理以下事件：
-  - [ ] 文件删除事件处理
-  - [ ] 文件更新事件处理  
-  - [ ] 文件创建事件处理
-- [ ] 支持更多文档类型同步
-- [ ] 添加同步状态通知机制
-- [ ] 支持多知识空间并发同步
-
 ## 注意事项
 
 1. **权限配置**：确保飞书应用具备足够的API权限，且已被添加为知识库管理员
@@ -273,3 +262,325 @@ wiki/
 ---
 
 通过这个工具，您可以实现飞书知识库到阿里云OSS的自动化同步，为后续的知识处理和AI应用提供支持。
+
+
+# OSS 触发器函数
+
+这是一个基于阿里云函数计算的OSS事件处理函数，用于监听OSS存储桶中的文件变更事件，并自动同步到AnalyticDB PostgreSQL的RAG知识库中。
+
+## 系统架构
+
+```mermaid
+flowchart TD
+    A[OSS文件变更] --> B[OSS触发器]
+    B --> C[函数计算启动]
+    C --> D[解析OSS事件]
+    D --> E{事件类型判断}
+    
+    E -->|ObjectCreated| F[文件创建处理]
+    E -->|ObjectModified| G[文件更新处理]
+    E -->|ObjectRemoved| H[文件删除处理]
+    
+    F --> I[提取文件信息]
+    G --> J[删除旧文档]
+    H --> M[删除ADB文档]
+    
+    I --> K[上传到ADB知识库]
+    J --> L[上传新文档到ADB知识库]
+    
+    K --> N[返回处理结果]
+    L --> N
+    M --> N
+    
+    O[AnalyticDB PostgreSQL] -.->|RAG Service API| K
+    O -.->|RAG Service API| L  
+    O -.->|RAG Service API| M
+```
+
+## 功能特点
+
+- **实时响应**：OSS文件变更后立即触发处理
+- **智能过滤**：支持文件类型和路径前缀过滤
+- **完整的CRUD操作**：
+  - 新建文件 → 创建知识库文档
+  - 更新文件 → 删除旧文档 + 创建新文档
+  - 删除文件 → 删除知识库文档
+- **元数据保留**：自动提取文件路径信息作为元数据
+- **错误处理**：完善的异常处理和重试机制
+
+## 前置条件
+
+### 1. AnalyticDB PostgreSQL 实例
+
+确保已创建并配置了支持RAG Service的AnalyticDB PostgreSQL实例：
+
+1. 实例版本需支持向量引擎
+2. 已创建文档集合(Collection)
+3. 已配置命名空间和密码
+
+### 2. OSS存储桶
+
+- 已创建OSS存储桶
+- 存储桶与函数计算在同一区域
+- 配置了适当的访问权限
+
+### 3. 函数计算权限
+
+函数计算服务角色需要具备以下权限：
+
+```json
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "gpdb:UploadDocumentAsync",
+        "gpdb:DeleteDocument",
+        "gpdb:DescribeDBInstances"
+      ],
+      "Resource": "acs:gpdb:*:*:dbinstance/gp-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "oss:GetObject"
+      ],
+      "Resource": "acs:oss:*:*:your-bucket-name/*"
+    }
+  ]
+}
+```
+
+## 部署配置
+
+### 1. 环境变量配置
+
+```json
+{
+  "GPDB_INSTANCE_ID": "gp-xxxxxxxxx",
+  "GPDB_REGION_ID": "cn-hangzhou",
+  "GPDB_COLLECTION": "document",
+  "GPDB_NAMESPACE": "public", 
+  "GPDB_NAMESPACE_PASSWORD": "testpassword",
+  "GPDB_ENDPOINT": "https://gpdb.cn-hangzhou.aliyuncs.com",
+  "OSS_TRIGGER_BUCKET": "your-bucket-name",
+  "OSS_PREFIX_FILTER": "wiki/"
+}
+```
+
+**环境变量说明：**
+
+| 变量名 | 必需 | 说明 | 示例值 |
+|-------|------|------|--------|
+| `GPDB_INSTANCE_ID` | ✅ | AnalyticDB实例ID | `gp-xxxxxxxxx` |
+| `GPDB_REGION_ID` | ✅ | 实例所在区域 | `cn-hangzhou` |
+| `GPDB_COLLECTION` | ✅ | 文档集合名称 | `document` |
+| `GPDB_NAMESPACE` | ❌ | 命名空间 | `public` |
+| `GPDB_NAMESPACE_PASSWORD` | ✅ | 命名空间密码 | `testpassword` |
+| `GPDB_ENDPOINT` | ❌ | ADB服务端点 | `https://gpdb.cn-hangzhou.aliyuncs.com` |
+| `OSS_TRIGGER_BUCKET` | ❌ | 触发的OSS桶名 | `your-bucket-name` |
+| `OSS_PREFIX_FILTER` | ❌ | 文件路径前缀过滤 | `wiki/` |
+
+### 2. 创建OSS触发器
+
+在函数计算控制台为函数配置OSS触发器：
+
+```yaml
+triggers:
+  - name: oss-trigger
+    type: oss
+    config:
+      bucketName: your-bucket-name
+      events:
+        - oss:ObjectCreated:*
+        - oss:ObjectRemoved:*
+      prefix: wiki/
+      suffix: .md
+```
+
+**触发器配置说明：**
+
+- **bucketName**: 监听的OSS存储桶名称
+- **events**: 监听的事件类型
+  - `oss:ObjectCreated:*`: 所有文件创建事件
+  - `oss:ObjectRemoved:*`: 所有文件删除事件
+- **prefix**: 只处理指定前缀的文件
+- **suffix**: 只处理指定后缀的文件
+
+### 3. 支持的文件类型
+
+函数会自动过滤并处理以下文件类型：
+
+- `.md` - Markdown文档
+- `.txt` - 纯文本文档  
+- `.pdf` - PDF文档
+- `.docx` - Word文档
+- `.doc` - 旧版Word文档
+- `.html` - HTML文档
+- `.json` - JSON文档
+- `.csv` - CSV表格文档
+
+## 处理逻辑
+
+### 文件创建事件 (ObjectCreated)
+
+```mermaid
+flowchart TD
+    A[收到创建事件] --> B[提取文件信息]
+    B --> C{文件类型检查}
+    C -->|支持| D[生成文件URL]
+    C -->|不支持| E[跳过处理]
+    D --> F[提取路径元数据]
+    F --> G[调用UploadDocumentAsync API]
+    G --> H[返回JobId]
+```
+
+处理步骤：
+1. 从OSS事件中提取文件信息（桶名、文件路径、文件名）
+2. 检查文件是否符合处理条件（路径前缀、文件类型）
+3. 生成文件的访问URL
+4. 从文件路径中提取元数据信息
+5. 调用AnalyticDB的异步文档上传API
+6. 返回上传任务ID
+
+### 文件更新事件 (ObjectModified)
+
+```mermaid
+flowchart TD
+    A[收到更新事件] --> B[提取文件信息]
+    B --> C{文件类型检查}
+    C -->|支持| D[调用DeleteDocument API]
+    C -->|不支持| E[跳过处理]
+    D --> F[调用UploadDocumentAsync API]
+    F --> G[返回处理结果]
+```
+
+处理步骤：
+1. 先删除AnalyticDB中的旧文档
+2. 再上传新文档内容
+3. 确保文档内容完全更新
+
+### 文件删除事件 (ObjectRemoved)
+
+```mermaid
+flowchart TD
+    A[收到删除事件] --> B[提取文件信息]
+    B --> C{文件类型检查}
+    C -->|支持| D[调用DeleteDocument API]
+    C -->|不支持| E[跳过处理]
+    D --> F[返回删除结果]
+```
+
+处理步骤：
+1. 从AnalyticDB中删除对应的文档
+2. 确保知识库内容与OSS保持同步
+
+## 使用示例
+
+### 测试文件上传
+```bash
+# 上传一个Markdown文件到OSS触发处理
+aws s3 cp test-document.md s3://your-bucket-name/wiki/规章制度/测试文档.md
+```
+
+### 查看处理结果
+函数执行后会返回处理结果：
+
+```json
+{
+  "statusCode": 200,
+  "body": {
+    "success": true,
+    "message": "OSS事件处理完成",
+    "event_name": "ObjectCreated:PutObject",
+    "file_info": {
+      "bucket_name": "your-bucket-name",
+      "object_key": "wiki/规章制度/测试文档.md",
+      "file_name": "测试文档.md",
+      "file_url": "https://your-bucket-name.oss-cn-hangzhou.aliyuncs.com/wiki/规章制度/测试文档.md"
+    },
+    "result": {
+      "action": "upload",
+      "status": "success",
+      "job_id": "231460f8-75dc-405e-a669-0c5204887e91"
+    }
+  }
+}
+```
+
+## 监控和日志
+
+### 关键日志信息
+
+```log
+# 事件处理开始
+开始处理OSS触发事件
+处理事件: ObjectCreated:PutObject, 文件: wiki/规章制度/员工管理制度.md
+
+# 文件处理
+处理文件创建事件: wiki/规章制度/员工管理制度.md
+文档上传任务已提交 - JobId: 231460f8-75dc-405e-a669-0c5204887e91
+
+# 处理完成
+事件处理完成: {"action": "upload", "status": "success", "job_id": "231460f8-75dc-405e-a669-0c5204887e91"}
+```
+
+### 错误排查
+
+常见错误及解决方案：
+
+| 错误信息 | 原因 | 解决方案 |
+|---------|------|---------|
+| `解析OSS事件失败` | 事件格式异常 | 检查OSS触发器配置 |
+| `API调用失败` | ADB实例或权限问题 | 验证实例ID和访问权限 |
+| `文件不在处理范围内` | 路径前缀不匹配 | 检查`OSS_PREFIX_FILTER`配置 |
+| `不支持的文件类型` | 文件扩展名不在支持列表中 | 检查文件类型或修改过滤逻辑 |
+
+## 性能优化
+
+### 1. 并发控制
+- 函数默认并发度为100，可根据ADB实例性能调整
+- 建议设置合理的预留并发避免冷启动
+
+### 2. 文档处理参数
+可在代码中调整以下参数优化处理效果：
+
+```python
+params = {
+    'ChunkSize': 500,  # 文档分块大小
+    'ChunkOverlap': 50,  # 分块重叠大小
+    'TextSplitterName': 'ChineseRecursiveTextSplitter',  # 中文分词器
+    'DocumentLoaderName': 'UnstructuredFileLoader'  # 文档加载器
+}
+```
+
+### 3. 成本控制
+- 合理设置文件过滤规则，避免处理无关文件
+- 使用异步上传API，提高处理效率
+- 监控AnalyticDB的API调用量
+
+## 扩展功能
+
+### 支持更多事件类型
+可扩展支持以下OSS事件：
+- `oss:ObjectCreated:Copy` - 文件复制
+- `oss:ObjectCreated:CompleteMultipartUpload` - 分片上传完成
+
+### 批量处理
+对于大量文件的批量处理，可以：
+1. 使用OSS Inventory功能获取文件清单
+2. 通过函数计算的异步调用处理批量任务
+3. 实现进度跟踪和断点续传
+
+## 注意事项
+
+1. **文件访问权限**：确保AnalyticDB可以访问OSS中的文件URL
+2. **网络连通性**：函数计算与AnalyticDB之间网络要畅通
+3. **文档大小限制**：单个文档建议不超过100MB
+4. **API限流**：注意AnalyticDB API的调用频率限制
+5. **异步处理**：文档上传是异步的，可通过GetUploadDocumentJob查询状态
+
+---
+
+通过OSS触发器函数，您可以实现文件变更的实时响应，自动将文档同步到AnalyticDB PostgreSQL的RAG知识库中，为AI应用提供实时的知识更新支持。

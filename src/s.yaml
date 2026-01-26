@@ -13,7 +13,7 @@
 #   有问题快来钉钉群问一下吧：33947367
 # ------------------------------------
 
-edition: 1.0.0          #  命令行YAML规范版本，遵循语义化版本（Semantic Versioning）规范
+edition: 3.0.0          #  命令行YAML规范版本，遵循语义化版本（Semantic Versioning）规范
 name: feishu-knowledge-sync       #  项目名称
 
 # access 是当前应用所需要的密钥信息配置：
@@ -23,15 +23,10 @@ access: "{{ access }}"
 
 vars:
   region: "{{ region }}"
-  service:
-    name: "{{ serviceName }}"
-    description: 飞书知识库自动同步到AnalyticDB知识库的解决方案
-    internetAccess: true
-    role: "{{ roleArn }}"
-    logConfig: auto
   runtime: python3.9
   timeout: 300
   memorySize: 512
+  role: "{{ roleArn }}"
   
   # 飞书配置
   feishu:
@@ -54,73 +49,77 @@ vars:
     namespacePassword: "{{ gpdbNamespacePassword }}"
     endpoint: "{{ gpdbEndpoint }}"
 
-services:
+resources:
   feishu-to-oss: # 飞书到OSS同步服务
-    component: fc    # 组件名称
+    component: fc3    # 使用fc3组件
     props: #  组件的属性值
       region: ${vars.region}
-      service: ${vars.service}
-      function:
-        name: feishu-to-oss
-        description: 飞书知识库同步到OSS的定时任务函数
-        runtime: ${vars.runtime}
-        codeUri: ./feishu-to-oss
-        handler: index.handler
-        memorySize: ${vars.memorySize}
-        timeout: ${vars.timeout}
-        environmentVariables:
-          FEISHU_APP_ID: ${vars.feishu.appId}
-          FEISHU_APP_SECRET: ${vars.feishu.appSecret}
-          WIKI_SPACE_NAME: ${vars.feishu.wikiSpaceName}
-          OSS_ENDPOINT: ${vars.oss.endpoint}
-          OSS_BUCKET_NAME: ${vars.oss.bucketName}
-          OSS_PREFIX: ${vars.oss.prefix}
-          MAX_RETRIES: "3"
-          RETRY_DELAY_BASE: "1.0"
+      functionName: feishu-to-oss
+      description: 飞书知识库同步到OSS的定时任务函数
+      runtime: ${vars.runtime}
+      code: ./feishu-to-oss
+      handler: index.handler
+      memorySize: ${vars.memorySize}
+      timeout: ${vars.timeout}
+      role: ${vars.role}
+      internetAccess: true
+      logConfig: auto
+      environmentVariables:
+        FEISHU_APP_ID: ${vars.feishu.appId}
+        FEISHU_APP_SECRET: ${vars.feishu.appSecret}
+        WIKI_SPACE_NAME: ${vars.feishu.wikiSpaceName}
+        OSS_ENDPOINT: ${vars.oss.endpoint}
+        OSS_BUCKET_NAME: ${vars.oss.bucketName}
+        OSS_PREFIX: ${vars.oss.prefix}
+        MAX_RETRIES: "3"
+        RETRY_DELAY_BASE: "1.0"
       triggers:
-        - name: timer-trigger
-          type: timer
-          config:
+        - triggerName: timer-trigger
+          triggerType: timer
+          triggerConfig:
             cronExpression: "0 0 2 * * *"  # 每天凌晨2点执行
             enable: true
-        - name: http-trigger
-          type: http
-          config:
+        - triggerName: http-trigger
+          triggerType: http
+          triggerConfig:
             authType: anonymous
             methods:
               - GET
               - POST
 
   oss-to-kb: # OSS到知识库同步服务
-    component: fc
+    component: fc3    # 使用fc3组件
     props: #  组件的属性值
       region: ${vars.region}
-      service: ${vars.service}
-      function:
-        name: oss-to-kb
-        description: OSS文件变更触发的AnalyticDB知识库同步函数
-        runtime: ${vars.runtime}
-        codeUri: ./oss-to-kb
-        handler: adb_py_index.handler
-        memorySize: ${vars.memorySize}
-        timeout: ${vars.timeout}
-        environmentVariables:
-          GPDB_INSTANCE_ID: ${vars.gpdb.instanceId}
-          GPDB_REGION_ID: ${vars.gpdb.regionId}
-          GPDB_COLLECTION: ${vars.gpdb.collection}
-          GPDB_NAMESPACE: ${vars.gpdb.namespace}
-          GPDB_NAMESPACE_PASSWORD: ${vars.gpdb.namespacePassword}
-          GPDB_ENDPOINT: ${vars.gpdb.endpoint}
-          OSS_TRIGGER_BUCKET: ${vars.oss.bucketName}
-          OSS_PREFIX_FILTER: ${vars.oss.prefix}
+      functionName: oss-to-kb
+      description: OSS文件变更触发的AnalyticDB知识库同步函数
+      runtime: ${vars.runtime}
+      code: ./oss-to-kb
+      handler: adb_py_index.handler
+      memorySize: ${vars.memorySize}
+      timeout: ${vars.timeout}
+      role: ${vars.role}
+      internetAccess: true
+      logConfig: auto
+      environmentVariables:
+        GPDB_INSTANCE_ID: ${vars.gpdb.instanceId}
+        GPDB_REGION_ID: ${vars.gpdb.regionId}
+        GPDB_COLLECTION: ${vars.gpdb.collection}
+        GPDB_NAMESPACE: ${vars.gpdb.namespace}
+        GPDB_NAMESPACE_PASSWORD: ${vars.gpdb.namespacePassword}
+        GPDB_ENDPOINT: ${vars.gpdb.endpoint}
+        OSS_TRIGGER_BUCKET: ${vars.oss.bucketName}
+        OSS_PREFIX_FILTER: ${vars.oss.prefix}
       triggers:
-        - name: oss-trigger
-          type: oss
-          config:
+        - triggerName: oss-trigger
+          triggerType: oss
+          triggerConfig:
             bucketName: ${vars.oss.bucketName}
             events:
               - oss:ObjectCreated:*
               - oss:ObjectRemoved:*
               - oss:ObjectRewrite:*
-            prefix: ${vars.oss.prefix}
-            suffix: ""
+            filter:
+              key:
+                prefix: ${vars.oss.prefix}
+                suffix: ""

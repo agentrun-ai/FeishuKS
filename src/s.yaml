@@ -1,0 +1,126 @@
+# ------------------------------------
+#   欢迎您使用阿里云函数计算 FC 组件进行项目开发
+#   组件仓库地址：https://github.com/devsapp/fc
+#   组件帮助文档：https://www.serverless-devs.com/fc/readme
+#   Yaml参考文档：https://www.serverless-devs.com/fc/yaml/readme
+#   关于：
+#      - Serverless Devs和FC组件的关系、如何声明/部署多个函数、超过50M的代码包如何部署
+#      - 关于.fcignore使用方法、工具中.s目录是做什么、函数进行build操作之后如何处理build的产物
+#   等问题，可以参考文档：https://www.serverless-devs.com/fc/tips
+#   关于如何做CICD等问题，可以参考：https://www.serverless-devs.com/serverless-devs/cicd
+#   关于如何进行环境划分等问题，可以参考：https://www.serverless-devs.com/serverless-devs/extend
+#   更多函数计算案例，可参考：https://github.com/devsapp/awesome/
+#   有问题快来钉钉群问一下吧：33947367
+# ------------------------------------
+
+edition: 1.0.0          #  命令行YAML规范版本，遵循语义化版本（Semantic Versioning）规范
+name: feishu-knowledge-sync       #  项目名称
+
+# access 是当前应用所需要的密钥信息配置：
+# 密钥配置可以参考：https://www.serverless-devs.com/serverless-devs/command/config
+# 密钥使用顺序可以参考：https://www.serverless-devs.com/serverless-devs/tool#密钥使用顺序与规范
+access: "{{ access }}"
+
+vars:
+  region: "{{ region }}"
+  service:
+    name: "{{ serviceName }}"
+    description: 飞书知识库自动同步到AnalyticDB知识库的解决方案
+    internetAccess: true
+    role: "{{ roleArn }}"
+    logConfig: auto
+  runtime: python3.9
+  timeout: 300
+  memorySize: 512
+  
+  # 飞书配置
+  feishu:
+    appId: "{{ feishuAppId }}"
+    appSecret: "{{ feishuAppSecret }}"
+    wikiSpaceName: "{{ wikiSpaceName }}"
+  
+  # OSS配置
+  oss:
+    endpoint: "{{ ossEndpoint }}"
+    bucketName: "{{ ossBucketName }}"
+    prefix: "{{ ossPrefix }}"
+  
+  # AnalyticDB配置
+  gpdb:
+    instanceId: "{{ gpdbInstanceId }}"
+    regionId: ${vars.region}
+    collection: "{{ gpdbCollection }}"
+    namespace: "{{ gpdbNamespace }}"
+    namespacePassword: "{{ gpdbNamespacePassword }}"
+    endpoint: "{{ gpdbEndpoint }}"
+
+services:
+  feishu-to-oss: # 飞书到OSS同步服务
+    component: fc    # 组件名称
+    props: #  组件的属性值
+      region: ${vars.region}
+      service: ${vars.service}
+      function:
+        name: feishu-to-oss
+        description: 飞书知识库同步到OSS的定时任务函数
+        runtime: ${vars.runtime}
+        codeUri: ./feishu-to-oss
+        handler: index.handler
+        memorySize: ${vars.memorySize}
+        timeout: ${vars.timeout}
+        environmentVariables:
+          FEISHU_APP_ID: ${vars.feishu.appId}
+          FEISHU_APP_SECRET: ${vars.feishu.appSecret}
+          WIKI_SPACE_NAME: ${vars.feishu.wikiSpaceName}
+          OSS_ENDPOINT: ${vars.oss.endpoint}
+          OSS_BUCKET_NAME: ${vars.oss.bucketName}
+          OSS_PREFIX: ${vars.oss.prefix}
+          MAX_RETRIES: "3"
+          RETRY_DELAY_BASE: "1.0"
+      triggers:
+        - name: timer-trigger
+          type: timer
+          config:
+            cronExpression: "0 0 2 * * *"  # 每天凌晨2点执行
+            enable: true
+        - name: http-trigger
+          type: http
+          config:
+            authType: anonymous
+            methods:
+              - GET
+              - POST
+
+  oss-to-kb: # OSS到知识库同步服务
+    component: fc
+    props: #  组件的属性值
+      region: ${vars.region}
+      service: ${vars.service}
+      function:
+        name: oss-to-kb
+        description: OSS文件变更触发的AnalyticDB知识库同步函数
+        runtime: ${vars.runtime}
+        codeUri: ./oss-to-kb
+        handler: adb_py_index.handler
+        memorySize: ${vars.memorySize}
+        timeout: ${vars.timeout}
+        environmentVariables:
+          GPDB_INSTANCE_ID: ${vars.gpdb.instanceId}
+          GPDB_REGION_ID: ${vars.gpdb.regionId}
+          GPDB_COLLECTION: ${vars.gpdb.collection}
+          GPDB_NAMESPACE: ${vars.gpdb.namespace}
+          GPDB_NAMESPACE_PASSWORD: ${vars.gpdb.namespacePassword}
+          GPDB_ENDPOINT: ${vars.gpdb.endpoint}
+          OSS_TRIGGER_BUCKET: ${vars.oss.bucketName}
+          OSS_PREFIX_FILTER: ${vars.oss.prefix}
+      triggers:
+        - name: oss-trigger
+          type: oss
+          config:
+            bucketName: ${vars.oss.bucketName}
+            events:
+              - oss:ObjectCreated:*
+              - oss:ObjectRemoved:*
+              - oss:ObjectRewrite:*
+            prefix: ${vars.oss.prefix}
+            suffix: ""

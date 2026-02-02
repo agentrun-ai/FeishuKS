@@ -1,29 +1,13 @@
-# ------------------------------------
-#   欢迎您使用阿里云函数计算 FC 组件进行项目开发
-#   组件仓库地址：https://github.com/devsapp/fc
-#   组件帮助文档：https://www.serverless-devs.com/fc/readme
-#   Yaml参考文档：https://www.serverless-devs.com/fc/yaml/readme
-#   关于：
-#      - Serverless Devs和FC组件的关系、如何声明/部署多个函数、超过50M的代码包如何部署
-#      - 关于.fcignore使用方法、工具中.s目录是做什么、函数进行build操作之后如何处理build的产物
-#   等问题，可以参考文档：https://www.serverless-devs.com/fc/tips
-#   关于如何做CICD等问题，可以参考：https://www.serverless-devs.com/serverless-devs/cicd
-#   关于如何进行环境划分等问题，可以参考：https://www.serverless-devs.com/serverless-devs/extend
-#   更多函数计算案例，可参考：https://github.com/devsapp/awesome/
-#   有问题快来钉钉群问一下吧：33947367
-# ------------------------------------
+edition: 3.0.0
+name: feishu-knowledge-sync
 
-edition: 3.0.0          #  命令行YAML规范版本，遵循语义化版本（Semantic Versioning）规范
-name: feishu-knowledge-sync       #  项目名称
-
-# access 是当前应用所需要的密钥信息配置：
-# 密钥配置可以参考：https://www.serverless-devs.com/serverless-devs/command/config
-# 密钥使用顺序可以参考：https://www.serverless-devs.com/serverless-devs/tool#密钥使用顺序与规范
+# 访问凭证配置
 access: "{{ access }}"
 
 vars:
+  # 基础配置
   region: "{{ region }}"
-  runtime: python3.9
+  runtime: python3.12
   timeout: 300
   memorySize: 512
   role: "{{ roleArn }}"
@@ -36,23 +20,24 @@ vars:
   
   # OSS配置
   oss:
-    endpoint: "{{ ossEndpoint }}"
+    endpoint: https://oss-${vars.region}.aliyuncs.com
     bucketName: "{{ ossBucketName }}"
     prefix: "{{ ossPrefix }}"
   
   # AnalyticDB配置
   gpdb:
     instanceId: "{{ gpdbInstanceId }}"
-    regionId: ${vars.region}
     collection: "{{ gpdbCollection }}"
     namespace: "{{ gpdbNamespace }}"
     namespacePassword: "{{ gpdbNamespacePassword }}"
-    endpoint: "{{ gpdbEndpoint }}"
 
 resources:
-  feishu-to-oss: # 飞书到OSS同步服务
-    component: fc3    # 使用fc3组件
-    props: #  组件的属性值
+  # ========================================
+  # 服务1: 飞书到OSS同步服务
+  # ========================================
+  feishu-to-oss:
+    component: fc3
+    props:
       region: ${vars.region}
       functionName: feishu-to-oss
       description: 飞书知识库同步到OSS的定时任务函数
@@ -64,6 +49,8 @@ resources:
       role: ${vars.role}
       internetAccess: true
       logConfig: auto
+      
+      # 环境变量
       environmentVariables:
         FEISHU_APP_ID: ${vars.feishu.appId}
         FEISHU_APP_SECRET: ${vars.feishu.appSecret}
@@ -71,54 +58,63 @@ resources:
         OSS_ENDPOINT: ${vars.oss.endpoint}
         OSS_BUCKET_NAME: ${vars.oss.bucketName}
         OSS_PREFIX: ${vars.oss.prefix}
-        MAX_RETRIES: "3"
-        RETRY_DELAY_BASE: "1.0"
+      
+      # 触发器配置
       triggers:
         - triggerName: timer-trigger
           triggerType: timer
+          description: 定时同步飞书知识库
           triggerConfig:
-            cronExpression: "0 0 2 * * *"  # 每天凌晨2点执行
+            cronExpression: "{{ cronExpression }}"
             enable: true
-        - triggerName: http-trigger
-          triggerType: http
-          triggerConfig:
-            authType: anonymous
-            methods:
-              - GET
-              - POST
+            payload: '{"type": "scheduled"}'
 
-  oss-to-kb: # OSS到知识库同步服务
-    component: fc3    # 使用fc3组件
-    props: #  组件的属性值
+  # ========================================
+  # 服务2: OSS到知识库同步服务
+  # ========================================
+  oss-to-kb:
+    component: fc3
+    actions:
+      pre-deploy:
+        - run: pip install -r requirements.txt -t .
+          path: ./oss-to-kb
+        - run: echo "依赖安装完成"
+          path: ./
+    props:
       region: ${vars.region}
       functionName: oss-to-kb
       description: OSS文件变更触发的AnalyticDB知识库同步函数
       runtime: ${vars.runtime}
       code: ./oss-to-kb
-      handler: adb_py_index.handler
+      handler: index.handler
       memorySize: ${vars.memorySize}
       timeout: ${vars.timeout}
       role: ${vars.role}
       internetAccess: true
       logConfig: auto
+      
+      # 环境变量
       environmentVariables:
         GPDB_INSTANCE_ID: ${vars.gpdb.instanceId}
-        GPDB_REGION_ID: ${vars.gpdb.regionId}
+        GPDB_REGION_ID: ${vars.region}
         GPDB_COLLECTION: ${vars.gpdb.collection}
         GPDB_NAMESPACE: ${vars.gpdb.namespace}
         GPDB_NAMESPACE_PASSWORD: ${vars.gpdb.namespacePassword}
-        GPDB_ENDPOINT: ${vars.gpdb.endpoint}
         OSS_TRIGGER_BUCKET: ${vars.oss.bucketName}
         OSS_PREFIX_FILTER: ${vars.oss.prefix}
+      
+      # 触发器配置
       triggers:
         - triggerName: oss-trigger
           triggerType: oss
+          description: OSS文件变更触发知识库同步
           triggerConfig:
             bucketName: ${vars.oss.bucketName}
             events:
-              - oss:ObjectCreated:*
-              - oss:ObjectRemoved:*
-              - oss:ObjectRewrite:*
+              - oss:ObjectCreated:PutObject
+              - oss:ObjectCreated:PostObject
+              - oss:ObjectCreated:CompleteMultipartUpload
+              - oss:ObjectCreated:PutSymlink
             filter:
               key:
                 prefix: ${vars.oss.prefix}

@@ -2,7 +2,7 @@ Type: Application
 Name: feishu-knowledge-sync
 Provider:
   - 阿里云
-Version: 1.0.3
+Version: 1.0.4
 Description: 飞书知识库自动同步到AnalyticDB知识库的完整解决方案，支持定时同步和实时响应
 HomePage: https://github.com/devsapp/feishuks
 Tags:
@@ -26,12 +26,12 @@ Parameters:
   additionalProperties: false
   required:
     - region
-    - serviceName
     - roleArn
     - feishuAppId
     - feishuAppSecret
     - wikiSpaceName
     - gpdbInstanceId
+    - gpdbNamespace
     - gpdbNamespacePassword
     - ossBucketName
   properties:
@@ -60,61 +60,72 @@ Parameters:
         - us-west-1
         - us-east-1
         - ap-south-1
-    serviceName:
-      title: 服务名
-      type: string
-      default: feishu-sync-service
-      description: 服务名称，只能包含字母、数字、下划线和中划线。不能以数字、中划线开头。长度在 1-128 之间
     roleArn:
       title: RAM角色ARN
       type: string
+      default: ""
       description: 应用所属的函数计算服务配置的 role, 请提前创建好对应的 role, 授信函数计算服务, 并配置好相关权限策略
+      pattern: "^acs:ram::[0-9]*:role/.*$"
+      required: true
     feishuAppId:
       title: 飞书应用ID
       type: string
+      default: ""
       description: 飞书企业自建应用的App ID，格式如：cli_xxxxxxxxxxxxxxxxx
+      pattern: "^cli_[a-zA-Z0-9]+$"
+      required: true
     feishuAppSecret:
       title: 飞书应用密钥
       type: string
+      default: ""
       description: 飞书企业自建应用的App Secret
+      required: true
     wikiSpaceName:
       title: 知识库名称
       type: string
+      default: ""
       description: 要同步的飞书知识库名称，如：规章制度
+      required: true
     gpdbInstanceId:
       title: AnalyticDB实例ID
       type: string
+      default: ""
       description: AnalyticDB PostgreSQL版实例ID，格式如：gp-xxxxxxxxx
+      pattern: "^gp-[a-z0-9]+$"
+      required: true
     gpdbCollection:
       title: 文档集合名称
       type: string
       default: document
       description: AnalyticDB中的文档集合名称
+      required: false
     gpdbNamespace:
       title: 命名空间
       type: string
       default: public
       description: AnalyticDB中的命名空间
+      required: true
     gpdbNamespacePassword:
       title: 命名空间密码
       type: string
+      default: ""
       description: AnalyticDB命名空间对应的密码
-    gpdbEndpoint:
-      title: AnalyticDB端点
-      type: string
-      default: https://gpdb.cn-hangzhou.aliyuncs.com
-      description: AnalyticDB服务端点，如留空则使用默认值
+      required: true
     ossBucketName:
       title: OSS存储桶名称
       type: string
+      default: ""
       description: 用于存储知识库文档的OSS存储桶名称
+      required: true
     ossPrefix:
       title: OSS路径前缀
       type: string
       default: wiki/
-      description: OSS中存储文档的路径前缀
-    ossEndpoint:
-      title: OSS端点
+      description: OSS中存储文档的路径前缀，建议以 / 结尾
+      required: false
+    cronExpression:
+      title: 定时任务表达式
       type: string
-      default: https://oss-cn-hangzhou.aliyuncs.com
-      description: OSS服务端点，如留空则根据region自动生成
+      default: "0 0 2 * * *"
+      description: 定时同步的Cron表达式，默认每天凌晨2点执行
+      required: false
